@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Pet Adoption Platform - Adopt love today!" />
+    <link rel="icon" href="/favicon.ico" />
+    <title>PetAdopt</title>
+
+    <!-- Google Fonts for your theme (optional) -->
+    <link href="https://fonts.googleapis.com/css2?family=Comfortaa&family=Poppins&display=swap" rel="stylesheet" />
+
+    <!-- AOS styles (already used in components like Admin/UserDashboard) -->
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet" />
+  </head>
+
+  <body class="font-sans text-purple-900">
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+
+    <!-- AOS Animation Script (used globally) -->
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+
+    <!-- Tidio Chat Widget -->
+    <script src="http://code.tidio.co/cmijv7zbujwgbuq8hejtoqyw8ijexlqw.js"></script>
+    
+    <!-- Tidio Configuration -->
+    <script>
+      window.addEventListener('tidioChatApiReady', function() {
+        // Set visitor name
+        if (tidioChatApi && tidioChatApi.visitor) {
+          tidioChatApi.visitor.setName('Guest User');
+        }
+        
+        // Optional: Set visitor email
+        if (tidioChatApi && tidioChatApi.visitor) {
+          tidioChatApi.visitor.setEmail('visitor@example.com');
+        }
+      });
+    </script>
+    
+    <!-- Forward visitor messages to backend LLM and inject replies -->
+    <script>
+      (function () {
+        async function sendToAI(text) {
+          try {
+            const res = await fetch('/api/ai-chat/message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: text })
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            // API returns { success: true, message: '...' }
+            return data?.message || null;
+          } catch (e) {
+            console.error('AI request failed', e);
+            return null;
+          }
+        }
+
+        function registerHandlers(api) {
+          if (!api) return;
+
+          // Try to register common outgoing-message events (best-effort / defensive)
+          const tryRegister = (eventName) => {
+            try {
+              if (typeof api.on === 'function') {
+                api.on(eventName, async function (payload) {
+                  const text = (payload && (payload.text || payload.message || payload.body)) || null;
+                  if (!text) return;
+                  const reply = await sendToAI(text);
+                  if (!reply) return;
+
+                  // Inject reply into Tidio conversation using known best-effort methods
+                  if (typeof api.receiveMessage === 'function') {
+                    api.receiveMessage(reply);
+                  } else if (api.createMessage) {
+                    api.createMessage({ text: reply });
+                  } else if (api.push && api.push.incoming) {
+                    // older variations
+                    api.push.incoming(reply);
+                  } else {
+                    console.warn('No known method to inject message into Tidio API.');
+                  }
+                });
+                return true;
+              }
+            } catch (e) {
+              // ignore
+            }
+            return false;
+          };
+
+          // try several event names used across widget versions
+          tryRegister('message:send') || tryRegister('message:sent') || tryRegister('message:visitor') || tryRegister('visitor:message');
+        }
+
+        window.addEventListener('tidioChatApiReady', function () {
+          const api = window.tidioChatApi;
+          registerHandlers(api);
+          // In case API becomes available later, poll briefly
+          let attempts = 0;
+          const poll = setInterval(() => {
+            attempts += 1;
+            if (window.tidioChatApi) {
+              registerHandlers(window.tidioChatApi);
+              clearInterval(poll);
+            } else if (attempts > 10) clearInterval(poll);
+          }, 500);
+        });
+      })();
+    </script>
+  </body>
+</html>
+
